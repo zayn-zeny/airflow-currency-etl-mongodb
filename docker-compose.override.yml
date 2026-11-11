@@ -1,0 +1,39 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: currency_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-admin123}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db          # persistent storage
+    networks:
+      - airflow                      # same network as Airflow containers
+    labels:
+      description: "MongoDB primary database for currency rates"
+      network: "airflow"
+      persistent-storage: "mongo_data -> /data/db"
+
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: currency_mongo_express
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-admin123}@mongo:27017/
+      ME_CONFIG_BASICAUTH: "false"
+    ports:
+      - "8081:8081"
+    networks:
+      - airflow
+    labels:
+      description: "Mongo Express web admin UI for MongoDB"
+      network: "airflow"
+
+volumes:
+  mongo_data:
+    name: currency_mongo_data
