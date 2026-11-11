@@ -1,45 +1,51 @@
-Overview
-========
+# Airflow Currency ETL → MongoDB
 
-Welcome to Astronomer! This project was generated after you ran 'astro dev init' using the Astronomer CLI. This readme describes the contents of the project, as well as how to run Apache Airflow on your local machine.
+Daily ETL built with Astro CLI / Apache Airflow. It pulls EUR exchange rates (USD, GBP, JPY) from the [Frankfurter API](https://frankfurter.dev/), transforms them, and upserts them into MongoDB. Mongo Express is included as the web admin UI.
 
-Project Contents
-================
+## Pipeline (`dags/currency_etl.py`)
 
-Your Astro project contains the following files and folders:
+| Task | What it does | XCom key |
+|------|--------------|----------|
+| `extract` | GET `https://api.frankfurter.dev/v2/rates?base=EUR&quotes=USD,GBP,JPY` | `raw_rates` |
+| `transform` | Reshapes the response into one document per currency pair | `transformed_rates` |
+| `load` | Upserts into `currency_db.exchange_rates` (key: base, target, rate_date) | – |
 
-- dags: This folder contains the Python files for your Airflow Dags. By default, this directory includes one example Dag:
-    - `example_astronauts`: This Dag shows a simple ETL pipeline example that queries the list of astronauts currently in space from the Open Notify API and prints a statement for each astronaut. The Dag uses the TaskFlow API to define tasks in Python, and dynamic task mapping to dynamically print a statement for each astronaut. For more on how this Dag works, see our [Getting started tutorial](https://www.astronomer.io/docs/learn/get-started-with-airflow).
-- Dockerfile: This file contains a versioned Astro Runtime Docker image that provides a differentiated Airflow experience. If you want to execute other commands or overrides at runtime, specify them here.
-- include: This folder contains any additional files that you want to include as part of your project. It is empty by default.
-- packages.txt: Install OS-level packages needed for your project by adding them to this file. It is empty by default.
-- requirements.txt: Install Python packages needed for your project by adding them to this file. It is empty by default.
-- plugins: Add custom or community plugins for your project to this file. It is empty by default.
-- airflow_settings.yaml: Use this local-only file to specify Airflow Connections, Variables, and Pools instead of entering them in the Airflow UI as you develop Dags in this project.
+Data moves between tasks only through named XComs (`ti.xcom_push` / `ti.xcom_pull` with explicit keys).
 
-Deploy Your Project Locally
-===========================
+Output document:
 
-Start Airflow on your local machine by running 'astro dev start'.
+```json
+{
+  "base_currency": "EUR",
+  "target_currency": "USD",
+  "exchange_rate": 1.1202,
+  "rate_date": "2026-11-11",
+  "source": "Frankfurter API",
+  "retrieved_at": "2026-11-11T13:08:22"
+}
+```
 
-This command will spin up five Docker containers on your machine, each for a different Airflow component:
+## Docker services (`docker-compose.override.yml`)
 
-- Postgres: Airflow's Metadata Database
-- Scheduler: The Airflow component responsible for monitoring and triggering tasks
-- Dag Processor: The Airflow component responsible for parsing Dags
-- API Server: The Airflow component responsible for serving the Airflow UI and API
-- Triggerer: The Airflow component responsible for triggering deferred tasks
+- **mongo** (`mongo:7`): primary database, port 27017
+- **mongo-express** (`mongo-express:1.0.2`): admin UI at http://localhost:8081
+- **Networking:** both join the `airflow` network so the DAG reaches Mongo at `mongo:27017`
+- **Persistent storage:** named volume `currency_mongo_data` mounted at `/data/db`
+- Metadata is attached as image/container `labels` (description, network, persistent storage)
 
-When all five containers are ready the command will open the browser to the Airflow UI at http://localhost:8080/. You should also be able to access your Postgres Database at 'localhost:5432/postgres' with username 'postgres' and password 'postgres'.
+## Run
 
-Note: If you already have either of the above ports allocated, you can either [stop your existing Docker containers or change the port](https://www.astronomer.io/docs/astro/cli/troubleshoot-locally#ports-are-not-available-for-my-local-airflow-webserver).
+Requires Docker and the [Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli).
 
-Deploy Your Project to Astronomer
-=================================
+1. Create `.env` (optional; defaults are `admin` / `admin123`):
+   ```
+   MONGO_USER=admin
+   MONGO_PASSWORD=admin123
+   MONGO_URI=mongodb://admin:admin123@mongo:27017/
+   ```
+   `MONGO_URI` is required by the DAG's `load` task.
+2. `astro dev start`
+3. Open the Airflow UI (URL printed by Astro), unpause and trigger `currency_etl`.
+4. Check results in Mongo Express at http://localhost:8081 → `currency_db` → `exchange_rates`.
 
-If you have an Astronomer account, pushing code to a Deployment on Astronomer is simple. For deploying instructions, refer to Astronomer documentation: https://www.astronomer.io/docs/astro/deploy-code/
-
-Contact
-=======
-
-The Astronomer CLI is maintained with love by the Astronomer team. To report a bug or suggest a change, reach out to our support.
+Local credentials are for development only.
